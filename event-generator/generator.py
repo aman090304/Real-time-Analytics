@@ -46,21 +46,25 @@ def generate_event():
 BASE_EVENT_RATE = 5000
 
 while True:
+    try:
+        start = time.time()
+        if random.random() < 0.1:
+            EVENT_RATE = random.randint(10000, 20000)
+        else:
+            EVENT_RATE = BASE_EVENT_RATE
 
-    start = time.time()
-    if random.random() < 0.1:
-        EVENT_RATE = random.randint(10000, 20000)
-    else:
-        EVENT_RATE = BASE_EVENT_RATE
+        for _ in range(EVENT_RATE):
+            producer.send("raw-events", generate_event())
 
-    for _ in range(EVENT_RATE):
-        producer.send("raw-events", generate_event())
+        producer.flush()
 
-    producer.flush()
+        elapsed = time.time() - start
 
-    elapsed = time.time() - start
+        print(f"Sent {EVENT_RATE} events in {elapsed:.2f}s")
 
-    print(f"Sent {EVENT_RATE} events in {elapsed:.2f}s")
-
-    if elapsed < 1:
-        time.sleep(1 - elapsed)
+        if elapsed < 1:
+            time.sleep(1 - elapsed)
+    except Exception as e:
+        print(f"Error during event generation/sending: {e}")
+        time.sleep(5)
+        continue

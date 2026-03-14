@@ -7,4 +7,4 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-CMD ["python", "generator.py"]
+CMD ["python", "-u", "generator.py"]
