@@ -34,3 +34,16 @@ services:
     build: ./event-generator
     depends_on:
       - kafka
+
+  stream-processor:
+    build: ./stream-worker
+    depends_on:
+      - kafka
+      - redis
+
+  analytics-api:
+    build: ./analytics-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
