@@ -27,7 +27,7 @@ for attempt in range(max_retries):
     except Exception as e:
         if attempt < max_retries - 1:
             print(f"Attempt {attempt + 1}/{max_retries}: Waiting for Kafka... ({e})")
-            time.sleep(2)
+            time.sleep(0.1 * (2 ** attempt))
         else:
             print(f"Failed to connect to Kafka after {max_retries} attempts")
             raise
@@ -44,6 +44,28 @@ def generate_event():
     }
 
 BASE_EVENT_RATE = 5000
+dlq_producer = KafkaProducer(
+    bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+    partitioner=lambda key, all_partitions, available_partitions: (
+        hash(key) % len(all_partitions) if key else random.randint(0, len(all_partitions) - 1)
+    )
+)
+
+def send_to_dlq(event, error_reason):
+    """Send failed events to dead-letter-events topic"""
+    dlq_event = {
+        "original_event": event,
+        "error_reason": error_reason,
+        "failed_at": int(time.time()),
+        "generator_id": GENERATOR_ID
+    }
+    try:
+        partition_key = str(event.get("user_id", "unknown")).encode("utf-8")
+        dlq_producer.send("dead-letter-events", value=dlq_event, key=partition_key)
+        print(f"Event {event['event_id']} sent to DLQ: {error_reason}")
+    except Exception as dlq_error:
+        print(f"Failed to send to DLQ: {dlq_error}")
 
 while True:
     try:
@@ -53,14 +75,28 @@ while True:
         else:
             EVENT_RATE = BASE_EVENT_RATE
 
+        failed_events = []
         for _ in range(EVENT_RATE):
-            producer.send("raw-events", generate_event())
+            event = generate_event()
+            try:
+                producer.send("raw-events", value=event, key=str(event["user_id"]).encode("utf-8"))
+            except Exception as e:
+                failed_events.append((event, str(e)))
 
         producer.flush()
+        
+        # Send failed events to DLQ
+        for event, error in failed_events:
+            send_to_dlq(event, error)
+        
+        dlq_producer.flush()
 
         elapsed = time.time() - start
 
-        print(f"Sent {EVENT_RATE} events in {elapsed:.2f}s")
+        if failed_events:
+            print(f"Sent {EVENT_RATE - len(failed_events)}/{EVENT_RATE} events in {elapsed:.2f}s ({len(failed_events)} to DLQ)")
+        else:
+            print(f"Sent {EVENT_RATE} events in {elapsed:.2f}s")
 
         if elapsed < 1:
             time.sleep(1 - elapsed)
